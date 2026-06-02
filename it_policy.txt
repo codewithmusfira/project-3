@@ -1,0 +1,17 @@
+Information Technology Policy - IT Usage Guidelines
+
+Password Security:
+Employees must create strong passwords containing at least 12 characters including numbers, symbols, and uppercase letters.
+Passwords must be changed every 90 days.
+
+Device Usage:
+Company-issued laptops and devices should only be used for work-related tasks.
+Installing unauthorized software is prohibited.
+
+Data Security:
+Confidential company data must not be stored on personal devices.
+Employees must use company-approved cloud storage for file sharing.
+
+Email Usage:
+Company email accounts should be used for official communication only.
+Suspicious emails or phishing attempts must be reported to the IT department immediately.
