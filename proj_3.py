@@ -1,127 +1,212 @@
-# Installing Streamlit and local tunnel utility for Kaggle web preview
-!pip install -q streamlit
-!npm install -q -g localtunnel
-print("✓ Streamlit and Localtunnel successfully installed!")
-%%writefile app.py
-import streamlit as st
 import os
 import chromadb
 from chromadb.utils import embedding_functions
-from langchain_openai import ChatOpenAI
+import requests
+import streamlit as st
+from dotenv import load_dotenv
 
-st.set_page_config(page_title='AI Assistant', page_icon='🤖', layout='wide')
+# ==================== FORCE DISABLE VERTEX AI ====================
+if "GOOGLE_GENAI_USE_VERTEXAI" in os.environ:
+    del os.environ["GOOGLE_GENAI_USE_VERTEXAI"]
 
+os.environ.pop("GOOGLE_GENAI_USE_VERTEXAI", None)   # Extra safety
+
+# ==========================================================
+# 🛠️ TASK 3.3: GLOBAL ERROR HANDLING (Start of Try Block)
+# ==========================================================
 try:
+    # Background memory se environment variables load karna
+    load_dotenv()
+
+    # ==========================================================
+    # ⚡ CACHED INITIALIZATION (Runs once for efficiency)
+    # ==========================================================
     @st.cache_resource
-    def init_chromadb_with_dummy_data():
-        """Initializes ChromaDB and inserts complete policy text directly to guarantee answers."""
-        client = chromadb.PersistentClient(path='./chromadb')
-        default_ef = embedding_functions.DefaultEmbeddingFunction()
+    def init_chromadb():
+        """
+        Initialize ChromaDB with EXACT Lab 11 settings
+        """
+        client = chromadb.PersistentClient(path='./chroma_db')
         
-        collection = client.get_or_create_collection(
-            name='company_docs',
-            embedding_function=default_ef
+        # Lab 11 wala exact stable embedding model
+        local_ef = embedding_functions.SentenceTransformerEmbeddingFunction(
+            model_name='all-MiniLM-L6-v2'
         )
         
-        # Injecting direct text data so the system is never empty
-        if collection.count() == 0:
-            policies = [
-                "Remote Work Guidelines: Employees can work from home up to 3 days per week with manager approval. Core working hours for remote tracking are 10:00 AM to 4:00 PM. Permanent work from home requires HR executive escalation.",
-                "Vacation and Time Off Policies: All full-time employees are entitled to 25 days of annual vacation leave per calendar year. Emergency time off must be logged via the HR portal at least 2 hours before shifts.",
-                "Parental Leave Benefits: The company provides 16 weeks of fully paid maternity leave for birth mothers and 4 weeks of fully paid paternity leave for secondary caregivers. Benefits apply immediately after probation."
-            ]
-            collection.add(
-                documents=policies,
-                ids=[f"policy_{i}" for i in range(len(policies))],
-                metadatas=[{"source": "hr_handbook"} for _ in policies]
-            )
+        # Agar folder missing hoga toh automatic FileNotFoundError catch hoga
+        collection = client.get_collection(
+            name='company_docs',
+            embedding_function=local_ef
+        )
         return collection
 
-    @st.cache_resource
-    def init_llm():
-        # Safeguard dummy key configuration to prevent API crashes
-        if not os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_API_KEY") == "sk-proj-YOUR_OPENAI_KEY_HERE":
-            os.environ["OPENAI_API_KEY"] = "dummy-key-for-local-retrieval"
-        return ChatOpenAI(model='gpt-3.5-turbo', temperature=0)
+    # Global Variable for DB
+    collection = init_chromadb()
 
-    collection = init_chromadb_with_dummy_data()
-    llm = init_llm()
+    # Streamlit secrets se key nikal kar clean karna
+    if "GEMINI_API_KEY" in st.secrets:
+        raw_api_key = st.secrets["GEMINI_API_KEY"]
+    else:
+        raw_api_key = os.getenv("GEMINI_API_KEY")
+         
+    if not raw_api_key:
+        raise ValueError("Missing Gemini API Key")
+         
+    clean_api_key = raw_api_key.strip().replace('"', '').replace("'", "")
 
-    def get_rag_response(query, n_results=1):
+    # CORRECTED INDENTATION: Function is now safely aligned inside the try block
+    def get_rag_response(query, n_results=3):
+        """
+        Get answer using RAG with Gemini API (Fixed Model Name)
+        """
         try:
-            results = collection.query(query_texts=[query], n_results=n_results)
-            if not results['documents'] or not results['documents'][0]:
+            # Search vector database
+            results = collection.query(
+                query_texts=[query],
+                n_results=n_results
+            )
+            
+            if not results.get('documents') or not results['documents'][0]:
                 return 'No relevant information found in documents.'
             
-            context = '\n'.join(results['documents'][0])
+            context = '\n\n--\n\n'.join(results['documents'][0])
             
-            # Since OpenAI key is local/dummy, cleanly return the exact matched chunk
-            return f"🤖 **[Context Retrieved From ChromaDB Successfully!]**\n\n{context}"
+            prompt = f'''You are a helpful HR assistant. Answer using ONLY the context below. 
+If the answer is not in the context, say "I cannot find this information in the company policy documents."
+Be concise and professional.
+
+Context:
+{context}
+
+Question: {query}
+Answer:'''
+
+            # FIXED: Use versioned model name
+            url = url =url = f"https://generativelanguage.googleapis.com/v1/models/gemini-3.5-flash:generateContent?key={clean_api_key}"
+            
+            headers = {'Content-Type': 'application/json'}
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0.7,
+                    "maxOutputTokens": 800,
+                }
+            }
+            
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
+            response_data = response.json()
+            
+            if response.status_code == 200:
+                return response_data['candidates'][0]['content']['parts'][0]['text']
+            else:
+                error_msg = response_data.get('error', {}).get('message', response.text)
+                return f"❌ API Error ({response.status_code}): {error_msg}"
+                
         except Exception as e:
             return f'Error: {str(e)}'
 
-    # Application UI Configuration
-    st.title('🏢 Company Knowledge Assistant')
-    st.markdown('Ask me anything about company policies!')
+    # ==========================================================
+    # 🎨 STREAMLIT MAIN UI DESIGN
+    # ==========================================================
+    st.set_page_config(
+        page_title='AI Assistant',
+        page_icon='🤖',
+        layout='wide'
+    )
 
+    st.title('🤖 Company Knowledge Assistant')
+    st.markdown('Ask me anything about company policies, vacation rules, or dress codes!')
+
+    # Initialize session state for chat history
     if 'messages' not in st.session_state:
         st.session_state.messages = []
 
+    # ==========================================================
+    # 🛠️ TASK 3.2: ADD WELCOME MESSAGE
+    # ==========================================================
+    if len(st.session_state.messages) == 0:
+        welcome = '''
+        Hi! I'm your company knowledge assistant.
+        
+        I can help you find information about:
+        - Vacation and time off policies
+        - Remote work guidelines
+        - Parental leave benefits
+        - And more!
+        
+        Just ask me a question to get started.
+        '''
+        with st.chat_message('assistant'):
+            st.write(welcome)
+
+    # ==========================================================
+    # 🛠️ TASK 3.1: ADD SIDEBAR
+    # ==========================================================
     with st.sidebar:
-        st.header('ℹ️ About')
-        st.markdown("Powered by local ChromaDB Vector Search.")
+        st.header('About')
+        st.markdown('''
+        This AI assistant can answer questions about:
+        - Vacation policies
+        - Remote work guidelines
+        - Parental leave
+        - Benefits information
+         
+        Powered by:
+        - Gemini 1.5 Flash (v1 Production)
+        - ChromaDB vector search
+        - Semantic RAG
+        ''')
+         
         st.divider()
-        st.metric('Documents Indexed', collection.count())
+         
+        # Stats (Live metrics display)
+        st.metric('Documents Indexed', collection.count() if collection else 0)
         st.metric('Messages in Chat', len(st.session_state.messages))
+         
         st.divider()
+         
+        # Clear chat button
         if st.button('Clear Chat History'):
             st.session_state.messages = []
             st.rerun()
 
-    if len(st.session_state.messages) == 0:
-        with st.chat_message('assistant'):
-            st.write("Hi! I'm your company knowledge assistant. 👋 Ask me a question to get started.")
+    # ==========================================================
+    # 💬 CHAT INTERFACE LOGIC
+    # ==========================================================
 
+    # Display chat history from session state
     for message in st.session_state.messages:
         with st.chat_message(message['role']):
             st.write(message['content'])
 
+    # Chat input section
     if prompt := st.chat_input('Ask a question...'):
+        # Add user message
         st.session_state.messages.append({'role': 'user', 'content': prompt})
         with st.chat_message('user'):
             st.write(prompt)
-            
+              
+        # Get AI response
         with st.chat_message('assistant'):
-            with st.spinner('Searching database...'):
+            with st.spinner('Searching documents...'):
                 response = get_rag_response(prompt)
-                st.write(response)
+            st.write(response)
+              
+        # Save response
         st.session_state.messages.append({'role': 'assistant', 'content': response})
 
-except Exception as e:
-    st.error(f'System Error: {str(e)}')
+# ==========================================================
+# 🛠️ TASK 3.3: EXCEPT BLOCKS (Catching Global Errors)
+# ==========================================================
+except FileNotFoundError:
+    st.error('''
+    Error: ChromaDB not found.
+    
+    Please run Week 11 lab to create the vector database first.
+    ''')
     st.stop()
-  # Extract the public IP to use as the password tunnel gateway
-!curl ipv4.icanhazip.com
-import subprocess
-import threading
-import time
-
-print("🧹 Cleaning older background processes...")
-!pkill -f streamlit
-!pkill -f localtunnel
-!pkill -f ngrok
-!pkill -f ssh
-
-print("🚀 Starting Streamlit background server...")
-def run_app():
-    subprocess.Popen("streamlit run app.py --server.port=8501 --server.address=0.0.0.0", shell=True)
-
-threading.Thread(target=run_app, daemon=True).start()
-time.sleep(5)
-
-print("\n🌐 Generating dynamic clean public link via Serveo...")
-print("Click the link below when it appears. Ignore any 'warning' or click 'Continue' if asked.")
-print("="*60)
-
-# This exposes port 8501 globally without requiring any login/token/password
-!ssh -o StrictHostKeyChecking=no -R 80:localhost:8501 serveo.net
+    
+except Exception as e:
+    st.error(f'Error: {str(e)}')
+    st.info('Make sure your Streamlit Secrets has GEMINI_API_KEY set.')
+    st.stop()
