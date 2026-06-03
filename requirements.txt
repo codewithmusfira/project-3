@@ -1,5 +1,6 @@
 streamlit
-chromadb
+chromadb==0.5.23
+protobuf==3.20.3
 langchain
 langchain-openai
 openai
