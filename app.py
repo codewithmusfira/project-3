@@ -82,7 +82,7 @@ Question: {query}
 Answer:'''
 
             # FIXED: Use versioned model name
-            url = url =url = f"https://generativelanguage.googleapis.com/v1/models/gemini-3.5-flash:generateContent?key={clean_api_key}"
+            url = url =url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={clean_api_key}"
             
             headers = {'Content-Type': 'application/json'}
             payload = {
