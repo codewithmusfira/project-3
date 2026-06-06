@@ -1,6 +1,7 @@
 streamlit
-chromadb==0.5.23
-protobuf==3.20.3
+chromadb>=1.0.15
+protobuf>=4.25.3
 langchain
 langchain-openai
 openai
+sentence-transformers
